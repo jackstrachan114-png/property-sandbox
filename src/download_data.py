@@ -14,6 +14,13 @@ from config import DATA_RAW, OUTPUTS, PipelineConfig, ensure_directories
 
 LOG_PATH = OUTPUTS / "download_log.csv"
 ALLOWED_EXTENSIONS = (".csv", ".zip", ".xls", ".xlsx", ".json")
+PRIORITY_FILE_HOST_HINTS = (
+    "assets.publishing.service.gov.uk",
+    "publicdata.landregistry.gov.uk",
+    "use-land-property-data.service.gov.uk",
+    "opendatacommunities",
+    "files.digital",
+)
 
 
 class DownloadDiscoveryError(RuntimeError):
@@ -38,9 +45,15 @@ def _extract_links(html: str, base_url: str) -> list[str]:
     raw_links = re.findall(r'href=["\']([^"\']+)["\']', html, flags=re.IGNORECASE)
     links = []
     for href in raw_links:
-        if href.startswith("mailto:"):
+        if href.startswith("mailto:") or href.startswith("#"):
             continue
-        links.append(urljoin(base_url, href))
+        absolute = urljoin(base_url, href)
+        parsed_abs = urlparse(absolute)
+        parsed_base = urlparse(base_url)
+        # Skip same-page anchors (same URL + fragment only)
+        if parsed_abs.scheme == parsed_base.scheme and parsed_abs.netloc == parsed_base.netloc and parsed_abs.path == parsed_base.path and parsed_abs.fragment:
+            continue
+        links.append(absolute)
 
     # Deduplicate while preserving order
     seen, deduped = set(), []
@@ -51,20 +64,50 @@ def _extract_links(html: str, base_url: str) -> list[str]:
     return deduped
 
 
-def _looks_like_download(url: str, keywords: tuple[str, ...]) -> bool:
+def _looks_like_download(url: str, keywords: tuple[str, ...], strict_files_only: bool = False) -> bool:
     low = url.lower()
+    parsed = urlparse(low)
+
+    # Never treat fragment links as files
+    if parsed.fragment and not parsed.path:
+        return False
 
     if any(low.endswith(ext) for ext in ALLOWED_EXTENSIONS):
         return True
 
-    parsed = urlparse(low)
     query = parse_qs(parsed.query)
 
-    path_hint = any(token in parsed.path for token in ("download", "attachment", "dataset"))
+    path_hint = any(token in parsed.path for token in ("download", "attachment", "dataset", "file"))
     query_hint = any(token in query for token in ("file", "format", "download"))
     keyword_hint = any(k in low for k in keywords)
+    host_hint = any(h in parsed.netloc for h in PRIORITY_FILE_HOST_HINTS)
 
-    return (path_hint or query_hint) and keyword_hint
+    if strict_files_only:
+        # For core sources, only allow direct file URLs or likely asset-file endpoints.
+        return host_hint and (path_hint or query_hint) and keyword_hint
+
+    return (host_hint or path_hint or query_hint) and keyword_hint
+
+
+def _candidate_rejection_reason(url: str, keywords: tuple[str, ...], strict_files_only: bool) -> str:
+    parsed = urlparse(url)
+    if url.startswith("#"):
+        return "fragment-only link"
+    if parsed.fragment and not parsed.path:
+        return "fragment-only link"
+    if _looks_like_download(url, keywords, strict_files_only=strict_files_only):
+        return ""
+    return "not a file-like download candidate"
+
+
+def _prioritize_links(links: list[str]) -> list[str]:
+    def score(u: str) -> tuple[int, int]:
+        low = u.lower()
+        host_priority = 0 if any(h in urlparse(low).netloc for h in PRIORITY_FILE_HOST_HINTS) else 1
+        ext_priority = 0 if any(low.endswith(ext) for ext in ALLOWED_EXTENSIONS) else 1
+        return (host_priority, ext_priority)
+
+    return sorted(links, key=score)
 
 
 def _filename_for_url(url: str, fallback_prefix: str) -> str:
@@ -159,6 +202,17 @@ def _download_discovered_files(dataset: str, links: list[str], folder: Path) -> 
 
         try:
             body, content_type, http_status = _fetch_bytes(link)
+            if "text/html" in (content_type or "").lower():
+                row.update(
+                    {
+                        "status": "rejected_html",
+                        "http_status": http_status,
+                        "content_type": content_type,
+                        "note": "Rejected candidate link: returned HTML, not a dataset file.",
+                    }
+                )
+                rows.append(row)
+                continue
             out_path.write_bytes(body)
             manifest[link] = out_path.name
             row.update(
@@ -200,7 +254,30 @@ def _process_dataset_page(
         rows.append(landing_row)
 
         all_links = _extract_links(html, page_url)
-        data_links = [u for u in all_links if _looks_like_download(u, keywords)]
+        strict_files_only = dataset in {"price_paid", "ukhpi"}
+
+        data_links: list[str] = []
+        for candidate in all_links:
+            rejection = _candidate_rejection_reason(candidate, keywords, strict_files_only=strict_files_only)
+            if rejection:
+                rows.append(
+                    {
+                        "dataset": dataset,
+                        "entry_type": "candidate_reject",
+                        "source_url": candidate,
+                        "download_timestamp_utc": _utc_timestamp(),
+                        "status": "rejected",
+                        "file_path": "",
+                        "file_size_bytes": 0,
+                        "http_status": "",
+                        "content_type": "",
+                        "note": f"Rejected candidate link: {rejection}",
+                    }
+                )
+                continue
+            data_links.append(candidate)
+
+        data_links = _prioritize_links(data_links)
 
         landing_row["note"] = f"Discovered {len(data_links)} downloadable links; limit={limit}."
 
