@@ -65,7 +65,3 @@ python src/run_pipeline.py
 ## Reproducibility and traceability
 - Raw files are logged with URL, timestamp, status, path, size, and content type in `outputs/download_log.csv`.
 - Each module can run independently and writes deterministic outputs given the same inputs.
-
-
-## Environment note
-This version includes a dependency-light fallback that writes JSONL-formatted placeholder content under `.parquet` filenames when dataframe libraries are unavailable. Install pandas/pyarrow later if strict parquet binaries are required.
