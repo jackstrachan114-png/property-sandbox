@@ -1,99 +1,105 @@
 from __future__ import annotations
 
-import pandas as pd
-
 from config import DATA_PROCESSED, OUTPUTS, PipelineConfig
+from io_utils import read_parquet_placeholder, write_csv, write_parquet_placeholder
 
 
-def classify_row(r: pd.Series) -> tuple[str, str, str, bool]:
-    ownership = str(r.get("ownership_type", "unresolved"))
-    epc = str(r.get("epc_category", "unknown"))
+def classify_row(r: dict) -> tuple[str, str, str, bool]:
+    ownership = r.get("ownership_type", "unresolved")
+    epc = r.get("epc_category", "unknown")
 
     company = ownership in {"UK_company", "overseas_company"}
     rental = epc in {"rented_private", "rented_social"}
     owner_sig = epc == "owner_occupied"
-
     conflicting = owner_sig and company
 
     if company or rental:
         return "not_owner_occupied_likely", "high", "direct_or_strong_proxy", conflicting
-
-    if owner_sig and not company and not rental and not conflicting:
+    if owner_sig and not conflicting:
         return "owner_occupied_likely", "high", "epc_owner_signal", conflicting
-
-    if ownership in {"individual"} and not rental and not conflicting:
+    if ownership == "individual" and not rental:
         return "owner_occupied_likely", "medium", "individual_no_conflict", conflicting
-
-    if ownership in {"trust_or_other"}:
+    if ownership == "trust_or_other":
         return "not_owner_occupied_likely", "medium", "ownership_proxy", conflicting
-
     return "uncertain", "low", "sparse_or_conflicting", conflicting
 
 
-def classify_owner_occupation(cfg: PipelineConfig) -> pd.DataFrame:
-    fp = DATA_PROCESSED / "linked_candidate_population.parquet"
-    if not fp.exists():
-        raise FileNotFoundError("linked_candidate_population.parquet missing")
+def classify_owner_occupation(cfg: PipelineConfig) -> list[dict]:
+    rows = read_parquet_placeholder(DATA_PROCESSED / "linked_candidate_population.parquet")
+    out = []
+    for r in rows:
+        status, tier, evidence, flag = classify_row(r)
+        rr = dict(r)
+        rr.update({
+            "owner_occupation_status": status,
+            "confidence_tier": tier,
+            "evidence_basis": evidence,
+            "conflicting_signals_flag": flag,
+        })
+        out.append(rr)
 
-    df = pd.read_parquet(fp)
-    results = df.apply(classify_row, axis=1, result_type="expand")
-    results.columns = ["owner_occupation_status", "confidence_tier", "evidence_basis", "conflicting_signals_flag"]
-    out = pd.concat([df, results], axis=1)
+    write_parquet_placeholder(DATA_PROCESSED / "classified_owner_occupation.parquet", out)
 
-    out.to_parquet(DATA_PROCESSED / "classified_owner_occupation.parquet", index=False)
+    conf_counts = {}
+    own_counts = {}
+    for r in out:
+        ck = (r["owner_occupation_status"], r["confidence_tier"])
+        conf_counts[ck] = conf_counts.get(ck, 0) + 1
+        ok = r.get("ownership_type", "unresolved") or "unresolved"
+        own_counts[ok] = own_counts.get(ok, 0) + 1
 
-    conf = out.groupby(["owner_occupation_status", "confidence_tier"]).size().reset_index(name="count")
-    conf["share"] = conf["count"] / len(out) if len(out) else 0
-    conf.to_csv(OUTPUTS / "classification_confidence_summary.csv", index=False)
+    conf_rows = [{"owner_occupation_status": k[0], "confidence_tier": k[1], "count": v, "share": (v/len(out) if out else 0)} for k, v in conf_counts.items()]
+    write_csv(OUTPUTS / "classification_confidence_summary.csv", conf_rows, ["owner_occupation_status", "confidence_tier", "count", "share"])
 
-    own_dist = out["ownership_type"].fillna("unresolved").value_counts().rename_axis("ownership_type").reset_index(name="count")
-    own_dist["share"] = own_dist["count"] / len(out) if len(out) else 0
-    own_dist.to_csv(OUTPUTS / "ownership_type_distribution.csv", index=False)
+    own_rows = [{"ownership_type": k, "count": v, "share": (v/len(out) if out else 0)} for k, v in own_counts.items()]
+    write_csv(OUTPUTS / "ownership_type_distribution.csv", own_rows, ["ownership_type", "count", "share"])
 
-    region_col = "district" if "district" in out.columns else None
-    if region_col:
-        grp = out.groupby(region_col)
-        res = []
-        for reg, g in grp:
-            n = len(g)
-            owner_share = (g["owner_occupation_status"] == "owner_occupied_likely").mean() if n else 0
-            res.append({"region": reg, "count": n, "owner_occupied_share_central_proxy": owner_share})
-        pd.DataFrame(res).to_csv(OUTPUTS / "owner_occupation_range_by_region.csv", index=False)
-    else:
-        pd.DataFrame(columns=["region", "count", "owner_occupied_share_central_proxy"]).to_csv(
-            OUTPUTS / "owner_occupation_range_by_region.csv", index=False
-        )
+    region_counts = {}
+    for r in out:
+        region = r.get("district", "unknown")
+        region_counts.setdefault(region, {"count": 0, "owner": 0})
+        region_counts[region]["count"] += 1
+        if r["owner_occupation_status"] == "owner_occupied_likely":
+            region_counts[region]["owner"] += 1
+    region_rows = []
+    for region, vals in region_counts.items():
+        region_rows.append({"region": region, "count": vals["count"], "owner_occupied_share_central_proxy": (vals["owner"] / vals["count"] if vals["count"] else 0)})
+    write_csv(OUTPUTS / "owner_occupation_range_by_region.csv", region_rows, ["region", "count", "owner_occupied_share_central_proxy"])
 
     return out
 
 
-def build_headline_range(df: pd.DataFrame) -> pd.DataFrame:
-    n = len(df)
+def build_headline_range(rows: list[dict]) -> list[dict]:
+    n = len(rows)
     if n == 0:
-        return pd.DataFrame([
+        return [
             {"estimate_type": "conservative", "owner_occupation_share": 0.0},
             {"estimate_type": "central", "owner_occupation_share": 0.0},
             {"estimate_type": "upper", "owner_occupation_share": 0.0},
-        ])
+        ]
 
-    owner = df["owner_occupation_status"] == "owner_occupied_likely"
-    not_owner = df["owner_occupation_status"] == "not_owner_occupied_likely"
-    uncertain = df["owner_occupation_status"] == "uncertain"
+    owner = sum(1 for r in rows if r["owner_occupation_status"] == "owner_occupied_likely")
+    uncertain = sum(1 for r in rows if r["owner_occupation_status"] == "uncertain")
+    conservative = owner / n
+    upper = (owner + uncertain) / n
 
-    conservative = owner.mean()
-    upper = (owner | uncertain).mean()
+    weight_map = {"high": 1.0, "medium": 0.7, "low": 0.4}
+    central_score = 0.0
+    for r in rows:
+        if r["owner_occupation_status"] == "owner_occupied_likely":
+            central_score += weight_map.get(r.get("confidence_tier", "low"), 0.5)
+        elif r["owner_occupation_status"] == "uncertain":
+            central_score += 0.5
+    central = central_score / n
 
-    weights = df["confidence_tier"].map({"high": 1.0, "medium": 0.7, "low": 0.4}).fillna(0.5)
-    central = (owner.astype(float) * weights + uncertain.astype(float) * 0.5).sum() / n
-
-    return pd.DataFrame([
+    return [
         {"estimate_type": "conservative", "owner_occupation_share": conservative},
         {"estimate_type": "central", "owner_occupation_share": central},
         {"estimate_type": "upper", "owner_occupation_share": upper},
-    ])
+    ]
 
 
 if __name__ == "__main__":
     cfg = PipelineConfig()
-    d = classify_owner_occupation(cfg)
-    build_headline_range(d).to_csv(OUTPUTS / "headline_metrics.csv", index=False)
+    metrics = build_headline_range(classify_owner_occupation(cfg))
+    write_csv(OUTPUTS / "headline_metrics.csv", metrics, ["estimate_type", "owner_occupation_share"])

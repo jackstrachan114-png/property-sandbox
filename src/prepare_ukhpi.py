@@ -1,58 +1,36 @@
 from __future__ import annotations
 
-from pathlib import Path
-import pandas as pd
-
 from config import DATA_INTERIM, DATA_RAW, PipelineConfig
+from io_utils import read_csv_files, write_parquet_placeholder
 
 
-def _find_ukhpi_csv() -> list[Path]:
-    return sorted((DATA_RAW / "ukhpi").glob("*.csv"))
-
-
-def prepare_ukhpi(cfg: PipelineConfig) -> pd.DataFrame:
-    files = _find_ukhpi_csv()
+def prepare_ukhpi(cfg: PipelineConfig) -> list[dict]:
+    files = sorted((DATA_RAW / "ukhpi").glob("*.csv"))
     if not files:
-        df = pd.DataFrame(columns=["region", "date", "hpi", "hpi_base", "uplift_factor"])
-        df.to_parquet(DATA_INTERIM / "ukhpi_uplift.parquet", index=False)
-        return df
+        write_parquet_placeholder(DATA_INTERIM / "ukhpi_uplift.parquet", [])
+        return []
 
-    frames = []
-    for f in files:
+    rows = read_csv_files(files)
+    # Flexible column discovery
+    out = []
+    by_region_base = {}
+    for r in rows:
+        region = r.get("region") or r.get("Region") or r.get("area") or r.get("Area") or r.get("geography") or "unknown"
+        date = r.get("date") or r.get("Date") or ""
+        hpi_raw = r.get("hpi") or r.get("Index") or r.get("index") or ""
         try:
-            frames.append(pd.read_csv(f))
+            hpi = float(hpi_raw)
         except Exception:
             continue
-    if not frames:
-        df = pd.DataFrame(columns=["region", "date", "hpi", "hpi_base", "uplift_factor"])
-        df.to_parquet(DATA_INTERIM / "ukhpi_uplift.parquet", index=False)
-        return df
 
-    raw = pd.concat(frames, ignore_index=True)
+        if region not in by_region_base:
+            by_region_base[region] = hpi
+        base = by_region_base[region] or 1.0
+        uplift = hpi / base if base else 1.0
+        out.append({"region": region, "date": date, "hpi": hpi, "hpi_base": base, "uplift_factor": uplift})
 
-    col_map = {c.lower(): c for c in raw.columns}
-    date_col = next((col_map[c] for c in col_map if "date" in c), None)
-    region_col = next((col_map[c] for c in col_map if "region" in c or "area" in c or "geography" in c), None)
-    hpi_col = next((col_map[c] for c in col_map if "index" in c or c == "hpi"), None)
-
-    if not all([date_col, region_col, hpi_col]):
-        df = pd.DataFrame(columns=["region", "date", "hpi", "hpi_base", "uplift_factor"])
-        df.to_parquet(DATA_INTERIM / "ukhpi_uplift.parquet", index=False)
-        return df
-
-    df = raw[[region_col, date_col, hpi_col]].copy()
-    df.columns = ["region", "date", "hpi"]
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["hpi"] = pd.to_numeric(df["hpi"], errors="coerce")
-    df = df.dropna(subset=["date", "hpi"])
-
-    df = df.sort_values(["region", "date"])
-    df["hpi_base"] = df.groupby("region")["hpi"].transform("first")
-    df["uplift_factor"] = df["hpi"] / df["hpi_base"]
-
-    out = DATA_INTERIM / "ukhpi_uplift.parquet"
-    df.to_parquet(out, index=False)
-    return df
+    write_parquet_placeholder(DATA_INTERIM / "ukhpi_uplift.parquet", out)
+    return out
 
 
 if __name__ == "__main__":

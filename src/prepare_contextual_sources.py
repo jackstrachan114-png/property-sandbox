@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import pandas as pd
 from config import DATA_INTERIM, DATA_RAW, PipelineConfig
-
+from io_utils import write_csv
 
 CONTEXTUAL_DIR_NAMES = [
     "planning_data",
@@ -14,22 +13,26 @@ CONTEXTUAL_DIR_NAMES = [
 ]
 
 
-def prepare_contextual_sources(cfg: PipelineConfig) -> pd.DataFrame:
-    rows = []
-    for d in CONTEXTUAL_DIR_NAMES:
-        folder = DATA_RAW / d
-        for f in sorted(folder.glob("*")):
-            rows.append({
-                "dataset": d,
-                "file_name": f.name,
-                "file_size_bytes": f.stat().st_size,
-                "used_in_classifier": False,
-                "note": "Contextual only unless explicit defensible property-level use emerges.",
-            })
+def prepare_contextual_sources(cfg: PipelineConfig) -> list[dict]:
+    rows: list[dict] = []
+    for name in CONTEXTUAL_DIR_NAMES:
+        folder = DATA_RAW / name
+        for fp in sorted(folder.glob("*")):
+            if fp.is_file():
+                rows.append({
+                    "dataset": name,
+                    "file_name": fp.name,
+                    "file_size_bytes": fp.stat().st_size,
+                    "used_in_classifier": False,
+                    "note": "Contextual only.",
+                })
 
-    df = pd.DataFrame(rows)
-    df.to_csv(DATA_INTERIM / "contextual_inventory.csv", index=False)
-    return df
+    write_csv(
+        DATA_INTERIM / "contextual_inventory.csv",
+        rows,
+        ["dataset", "file_name", "file_size_bytes", "used_in_classifier", "note"],
+    )
+    return rows
 
 
 if __name__ == "__main__":

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from datetime import datetime, timezone
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_RAW = ROOT / "data" / "raw"
@@ -18,9 +17,8 @@ class PipelineConfig:
     analysis_date: str = datetime.now(timezone.utc).date().isoformat()
     min_price_threshold: int = 2_000_000
     threshold_band_floor: int = 1_500_000
-    fuzzy_match_cutoff: float = 90.0
     manual_review_sample_size: int = 120
-    max_rows_per_source: int | None = None
+    fuzzy_match_cutoff: int = 90
     random_seed: int = 42
     source_urls: dict = field(default_factory=lambda: {
         "price_paid": "https://www.gov.uk/government/statistical-data-sets/price-paid-data-downloads",
@@ -40,5 +38,5 @@ class PipelineConfig:
 
 
 def ensure_directories() -> None:
-    for p in [DATA_RAW, DATA_INTERIM, DATA_PROCESSED, OUTPUTS, DOCS]:
-        p.mkdir(parents=True, exist_ok=True)
+    for path in [DATA_RAW, DATA_INTERIM, DATA_PROCESSED, OUTPUTS, DOCS]:
+        path.mkdir(parents=True, exist_ok=True)

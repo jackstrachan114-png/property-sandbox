@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import traceback
-import pandas as pd
-
 from config import OUTPUTS, PipelineConfig, ensure_directories
 from download_data import run_downloads
 from prepare_price_paid import prepare_price_paid
@@ -14,132 +11,113 @@ from prepare_contextual_sources import prepare_contextual_sources
 from link_properties import build_candidate_populations, link_properties
 from classify_owner_occupation import classify_owner_occupation, build_headline_range
 from sensitivity_analysis import run_sensitivity
+from io_utils import write_csv
 
 
-def write_policy_brief(metrics: pd.DataFrame, classified: pd.DataFrame) -> None:
-    if metrics.empty or classified.empty:
-        content = """# Policy brief note
+def write_policy_brief(metrics: list[dict], classified: list[dict]) -> None:
+    metric_map = {m["estimate_type"]: m["owner_occupation_share"] for m in metrics}
+    if not classified:
+        text = """# Policy brief note
 
 1. Research question
 - What is the defensible range of owner-occupation among £2m+ properties?
 
 2. Why it matters for HVCTS
-- Targeting effectiveness and fairness depend on true occupancy mix.
+- Policy incidence and fairness depend on occupancy mix.
 
 3. What data was used
-- Pipeline scaffolding is implemented; accessible raw datasets were attempted.
+- Pipeline ran, but core raw datasets were not populated.
 
 4. What is directly observed
-- Transactions and any matched EPC/ownership fields where available.
+- None in this run.
 
 5. What is inferred
-- Occupancy classification and range estimates.
+- No robust property-level inference possible in this run.
 
 6. What we can say with confidence
-- Insufficient data loaded to produce robust estimates in this run.
+- Current run is a dry-run scaffold.
 
-7. The defensible range of owner-occupation for £2m+ properties
-- Not available from this run due to missing upstream inputs.
+7. Defensible range
+- Conservative: 0.000
+- Central: 0.000
+- Upper: 0.000
 
-8. How sensitive policy design is to that range
-- Sensitivity framework prepared; requires populated data.
+8. Policy sensitivity
+- Framework available; data required for substantive results.
 
 9. Key caveats
-- Open-data coverage and linkage uncertainty.
+- Missing raw core inputs.
 
-10. Recommendations for improving the evidence base
-- Ingest full PPD/EPC extracts and ownership endpoint exports; improve identifier linkage.
+10. Recommendations
+- Ingest PPD/EPC/ownership extracts and rerun.
 """
     else:
-        m = {r["estimate_type"]: r["owner_occupation_share"] for _, r in metrics.iterrows()}
-        content = f"""# Policy brief note
+        text = f"""# Policy brief note
 
 1. Research question
 - Defensible range of owner-occupation for £2m+ properties.
 
 2. Why it matters for HVCTS
-- Incidence, exemptions, and behavioural impacts depend on occupancy composition.
+- Drives targeting/exemption trade-offs.
 
 3. What data was used
-- Price Paid, UKHPI uplift proxy, EPC/ownership matches where available.
+- PPD, UKHPI, EPC, ownership where matched.
 
 4. What is directly observed
-- Transaction and matched ownership/tenure signals.
+- Transactions and matched signals.
 
 5. What is inferred
-- Occupancy class and confidence tier.
+- Occupancy class with confidence tiers.
 
 6. What we can say with confidence
-- High-confidence subset is reported in classification outputs.
+- High-confidence subset reported in outputs.
 
-7. The defensible range of owner-occupation for £2m+ properties
-- Conservative: {m.get('conservative', 0):.3f}
-- Central: {m.get('central', 0):.3f}
-- Upper: {m.get('upper', 0):.3f}
+7. Defensible range
+- Conservative: {metric_map.get('conservative', 0):.3f}
+- Central: {metric_map.get('central', 0):.3f}
+- Upper: {metric_map.get('upper', 0):.3f}
 
-8. How sensitive policy design is to that range
-- See outputs/sensitivity_note.md and sensitivity_scenarios.csv.
+8. Policy sensitivity
+- See outputs/sensitivity_note.md.
 
 9. Key caveats
-- Missing matches and proxy assumptions affect estimates.
+- Coverage and linkage limitations.
 
-10. Recommendations for improving the evidence base
-- Improve identifier-level linkage and refresh occupancy-signaling sources.
+10. Recommendations
+- Improve identifier-level linkage and coverage.
 """
+    (OUTPUTS / "policy_brief_note.md").write_text(text, encoding="utf-8")
 
-    (OUTPUTS / "policy_brief_note.md").write_text(content, encoding="utf-8")
 
+def write_audit_summary(stage_counts: dict, classified: list[dict]) -> None:
+    confidence = {}
+    for r in classified:
+        tier = r.get("confidence_tier", "unknown")
+        confidence[tier] = confidence.get(tier, 0) + 1
 
-def write_audit_summary(stage_counts: dict, classified: pd.DataFrame) -> None:
-    top_assumptions = [
-        "Candidate population definition (v1 vs v2).",
-        "Uplift factor choice for current-value proxy.",
-        "Treatment of unmatched records.",
-        "Company ownership interpreted as non-owner-occupation proxy.",
-        "Interpretation and coverage of EPC tenure/occupancy fields.",
-    ]
-    weak_source = "Ownership linkage feed (often sparse/endpoint-dependent in open environment)."
-    false_confidence_risk = "Classifying signal-poor records as owner-occupied by default."
-
-    lines = [
-        "# Audit summary",
-        "",
-        "## Stage row counts",
-    ]
+    lines = ["# Audit summary", "", "## Stage row counts"]
     for k, v in stage_counts.items():
         lines.append(f"- {k}: {v}")
 
-    match_rates = "N/A"
-    if not classified.empty and "match_stage" in classified.columns:
-        rates = classified["match_stage"].value_counts(normalize=True).round(3).to_dict()
-        match_rates = str(rates)
+    lines += ["", "## Confidence tiers"]
+    for k, v in confidence.items():
+        lines.append(f"- {k}: {v}")
 
     lines += [
         "",
-        "## Match rates",
-        f"- {match_rates}",
-        "",
-        "## Confidence tiers",
-    ]
-
-    if not classified.empty and "confidence_tier" in classified.columns:
-        for tier, cnt in classified["confidence_tier"].value_counts().to_dict().items():
-            lines.append(f"- {tier}: {cnt}")
-
-    lines += [
-        "",
-        "## Top five assumptions likely to bias estimate",
-    ]
-    lines += [f"- {x}" for x in top_assumptions]
-    lines += [
+        "## Top five assumptions most likely to bias estimate",
+        "- Candidate population definition (v1 vs v2)",
+        "- Uplift factor assumption",
+        "- Unmatched record treatment",
+        "- Company-ownership interpretation",
+        "- EPC coverage and interpretation",
         "",
         "## Weakest join or data source",
-        f"- {weak_source}",
+        "- Ownership linkage feed in open environment",
         "",
         "## Biggest risk of false confidence",
-        f"- {false_confidence_risk}",
+        "- Treating signal-poor records as owner-occupied",
     ]
-
     (OUTPUTS / "audit_summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -148,37 +126,22 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     stage_counts = {}
 
     run_downloads(cfg)
-
-    ppd = prepare_price_paid(cfg)
-    stage_counts["price_paid_clean"] = len(ppd)
-
-    ukhpi = prepare_ukhpi(cfg)
-    stage_counts["ukhpi_uplift"] = len(ukhpi)
-
-    epc = prepare_epc(cfg)
-    stage_counts["epc_clean"] = len(epc)
-
-    own = prepare_ownership(cfg)
-    stage_counts["ownership_clean"] = len(own)
-
-    addrs = prepare_addresses(cfg)
-    stage_counts["address_reference"] = len(addrs)
-
-    contextual = prepare_contextual_sources(cfg)
-    stage_counts["contextual_inventory"] = len(contextual)
+    ppd = prepare_price_paid(cfg); stage_counts["price_paid_clean"] = len(ppd)
+    ukhpi = prepare_ukhpi(cfg); stage_counts["ukhpi_uplift"] = len(ukhpi)
+    epc = prepare_epc(cfg); stage_counts["epc_clean"] = len(epc)
+    own = prepare_ownership(cfg); stage_counts["ownership_clean"] = len(own)
+    addr = prepare_addresses(cfg); stage_counts["address_reference"] = len(addr)
+    ctx = prepare_contextual_sources(cfg); stage_counts["contextual_inventory"] = len(ctx)
 
     v1, v2 = build_candidate_populations(cfg)
     stage_counts["candidate_population_v1"] = len(v1)
     stage_counts["candidate_population_v2"] = len(v2)
 
-    linked = link_properties(cfg)
-    stage_counts["linked_candidate_population"] = len(linked)
-
-    classified = classify_owner_occupation(cfg)
-    stage_counts["classified_owner_occupation"] = len(classified)
+    linked = link_properties(cfg); stage_counts["linked_candidate_population"] = len(linked)
+    classified = classify_owner_occupation(cfg); stage_counts["classified_owner_occupation"] = len(classified)
 
     metrics = build_headline_range(classified)
-    metrics.to_csv(OUTPUTS / "headline_metrics.csv", index=False)
+    write_csv(OUTPUTS / "headline_metrics.csv", metrics, ["estimate_type", "owner_occupation_share"])
 
     run_sensitivity(cfg)
     write_policy_brief(metrics, classified)
@@ -186,8 +149,4 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
 
 if __name__ == "__main__":
-    try:
-        run_pipeline(PipelineConfig())
-    except Exception:
-        traceback.print_exc()
-        raise
+    run_pipeline(PipelineConfig())
