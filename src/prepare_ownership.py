@@ -70,9 +70,14 @@ def prepare_ownership(cfg: PipelineConfig, candidate_postcodes: set[str] | None 
                       or r.get("name") or "")
         ownership_type, conf = classify_owner_name(owner_name)
         address_raw = r.get("property address") or r.get("address") or ""
+        # CCOD/OCOD addresses include the postcode at the end — strip it
+        # so address matching against PPD (which omits postcode) works
+        addr_clean = clean_text(address_raw)
+        if postcode and addr_clean.endswith(postcode):
+            addr_clean = addr_clean[: -len(postcode)].rstrip()
         out.append({
             "postcode_clean": postcode,
-            "address_clean": clean_text(address_raw),
+            "address_clean": addr_clean,
             "owner_name_raw": owner_name,
             "ownership_type": ownership_type,
             "ownership_type_confidence": conf,

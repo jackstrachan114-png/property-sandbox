@@ -18,7 +18,7 @@ class PipelineConfig:
     min_price_threshold: int = 2_000_000
     threshold_band_floor: int = 1_500_000
     manual_review_sample_size: int = 120
-    fuzzy_match_cutoff: int = 90
+    fuzzy_match_cutoff: int = 60
     random_seed: int = 42
     strict_core_inputs: bool = True
     ppd_download_limit: int = 5

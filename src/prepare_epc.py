@@ -26,12 +26,16 @@ def _iter_epc_rows(files: list[Path]):
         if path.suffix.lower() == ".zip":
             with zipfile.ZipFile(path) as zf:
                 for name in zf.namelist():
-                    if name.lower().endswith(".csv"):
-                        with zf.open(name) as f:
-                            txt = io.TextIOWrapper(f, encoding="utf-8", errors="ignore", newline="")
-                            reader = csv.DictReader(txt)
-                            for r in reader:
-                                yield {k.lower().strip(): v for k, v in r.items()}
+                    if not name.lower().endswith(".csv"):
+                        continue
+                    # Skip recommendations files — only certificates have tenure data
+                    if "recommendations" in name.lower():
+                        continue
+                    with zf.open(name) as f:
+                        txt = io.TextIOWrapper(f, encoding="utf-8", errors="ignore", newline="")
+                        reader = csv.DictReader(txt)
+                        for r in reader:
+                            yield {k.lower().strip(): v for k, v in r.items()}
         elif path.suffix.lower() == ".csv":
             with path.open("r", encoding="utf-8", errors="ignore", newline="") as f:
                 reader = csv.DictReader(f)

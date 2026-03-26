@@ -7,7 +7,14 @@
       "Bash(python3:*)",
       "WebFetch(domain:publicdata.landregistry.gov.uk)",
       "Bash(ls -lh data/raw/price_paid/*.csv)",
-      "Bash(ls -lh data/raw/ukhpi/*.csv)"
+      "Bash(ls -lh data/raw/ukhpi/*.csv)",
+      "Bash(python:*)",
+      "Bash(kill 3399 3605 3754)",
+      "Bash(ps:*)",
+      "Bash(kill 3848)",
+      "Bash(xargs kill:*)",
+      "Bash(xargs -I {} ps -p {} -o pid,rss,pcpu,etime --no-headers)",
+      "Bash(xargs -I {} ps -p {} -o rss,etime --no-headers)"
     ]
   }
 }
