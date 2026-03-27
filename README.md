@@ -98,3 +98,10 @@ Downloader behaviour:
 - Parses links and downloads discovered `.csv/.zip/.xls/.xlsx/.json` files.
 - Raises a clear error for core pages when no downloadable links can be discovered.
 - Logs landing-page fetches, discovered-link outcomes, and file-download/skipped-duplicate entries in `outputs/download_log.csv`.
+
+
+## Provided links mapped to folders
+I added a manual mapping of source links to the expected raw folders in:
+- `docs/manual_source_links.md`
+
+Use it when discovery/download is blocked and you need to place files directly.
