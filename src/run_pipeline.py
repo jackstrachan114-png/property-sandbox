@@ -11,6 +11,7 @@ from prepare_contextual_sources import prepare_contextual_sources
 from link_properties import build_candidate_populations, link_properties, link_properties_v2
 from classify_owner_occupation import classify_owner_occupation, classify_v2, build_headline_range
 from prepare_voa import prepare_voa_band_h
+from prepare_ctb import prepare_ctb_empty
 from sensitivity_analysis import run_sensitivity
 from io_utils import write_csv
 
@@ -139,6 +140,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     addr = prepare_addresses(cfg); stage_counts["address_reference"] = len(addr)
     ctx = prepare_contextual_sources(cfg); stage_counts["contextual_inventory"] = len(ctx)
     voa = prepare_voa_band_h(cfg); stage_counts["voa_band_h"] = voa.get("total_band_h", 0)
+    ctb = prepare_ctb_empty(cfg); stage_counts["ctb_band_h_empty"] = ctb.get("national_band_h_empty", 0)
 
     v1, v2 = build_candidate_populations(cfg)
     stage_counts["candidate_population_v1"] = len(v1)

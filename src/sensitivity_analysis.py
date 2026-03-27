@@ -74,6 +74,19 @@ def run_sensitivity(cfg: PipelineConfig) -> list[dict]:
             adjusted = central * coverage + 0.70 * (1 - coverage)
             scenarios.append({"scenario": "voa_adjusted_central", "owner_share": adjusted})
 
+    # CTB empty property calibration
+    ctb_rows = read_parquet_placeholder(DATA_INTERIM / "ctb_band_h_empty.parquet")
+    ctb_empty = sum(int(r.get("band_h_empty", 0)) for r in ctb_rows)
+    if ctb_empty and voa_total:
+        vacancy_rate = ctb_empty / voa_total
+        # Occupied Band H = total - empty. Of occupied, what % are owner-occupied?
+        # Our central estimate applies to the occupied subset, not the full population
+        occupied_share = 1 - vacancy_rate
+        scenarios.extend([
+            {"scenario": "ctb_band_h_empty", "owner_share": float(ctb_empty)},
+            {"scenario": "ctb_band_h_vacancy_rate", "owner_share": vacancy_rate},
+        ])
+
     # Population counts for reference
     scenarios.extend([
         {"scenario": "candidate_pop_v1_count", "owner_share": float(v1)},
@@ -108,6 +121,8 @@ def run_sensitivity(cfg: PipelineConfig) -> list[dict]:
         if v1 / voa_total < 1.0:
             adjusted = central * (v1 / voa_total) + 0.70 * (1 - v1 / voa_total)
             note_lines.append(f"VOA-adjusted central (assuming 70% owner-occ for unobserved): {adjusted:.3f}")
+    if ctb_empty and voa_total:
+        note_lines.append(f"CTB empty Band H properties: {ctb_empty:,} ({ctb_empty/voa_total*100:.1f}% vacancy rate)")
     note_lines.extend([
         "",
         "Lower bound implies tighter targeting may be feasible;",

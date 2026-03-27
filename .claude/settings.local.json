@@ -19,7 +19,10 @@
       "WebFetch(domain:voaratinglists.blob.core.windows.net)",
       "WebFetch(domain:download.companieshouse.gov.uk)",
       "WebFetch(domain:resources.companieshouse.gov.uk)",
-      "WebFetch(domain:assets.publishing.service.gov.uk)"
+      "WebFetch(domain:assets.publishing.service.gov.uk)",
+      "WebFetch(domain:www.data.gov.uk)",
+      "WebFetch(domain:docs.os.uk)",
+      "Bash(ls /mnt/c/Users/court/mets/property-sandbox/data/raw/price_paid/*.csv)"
     ]
   }
 }
