@@ -189,5 +189,4 @@ def link_properties_v2(cfg: PipelineConfig) -> list[dict]:
 if __name__ == "__main__":
     cfg = PipelineConfig()
     build_candidate_populations(cfg)
-    link_properties(cfg)
-    link_properties_v2(cfg)
+    link_all(cfg)
