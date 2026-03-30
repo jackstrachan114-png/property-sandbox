@@ -73,8 +73,12 @@ def prepare_epc(cfg: PipelineConfig, candidate_postcodes: set[str] | None = None
         write_parquet_placeholder(DATA_INTERIM / "epc_clean.parquet", [])
         return []
 
-    out = []
+    # Dedup inline: build dict directly during streaming to avoid transient double-copy.
+    # Priority: UPRN (97.6% coverage, most reliable) > BRN > postcode+address
+    # Keep latest by lodgement_date — same pattern as prepare_price_paid.py
+    dedup: dict[str, dict] = {}
     scanned = 0
+    kept = 0
     for r in _iter_epc_rows(files):
         scanned += 1
         postcode = clean_text(r.get("postcode", "")).replace(" ", "")
@@ -83,41 +87,40 @@ def prepare_epc(cfg: PipelineConfig, candidate_postcodes: set[str] | None = None
         if candidate_postcodes and postcode not in candidate_postcodes:
             continue
 
+        kept += 1
         addr = clean_text(r.get("address") or r.get("address1") or "")
-        lodgement = r.get("lodgement_date") or r.get("lodgement_datetime") or ""
+        lodgement = str(r.get("lodgement_date") or r.get("lodgement_datetime") or "")[:10]
         brn = r.get("building_reference_number") or ""
         uprn = (r.get("uprn") or "").strip()
         tenure = r.get("tenure") or ""
         txn_type = r.get("transaction_type") or ""
-        out.append({
+
+        rec = {
             "postcode_clean": postcode,
             "address_clean": addr,
             "epc_source_field": str(tenure),
             "epc_transaction_type": str(txn_type),
             "epc_category": map_epc_category(str(tenure), str(txn_type)),
-            "lodgement_date": str(lodgement)[:10],
+            "lodgement_date": lodgement,
             "building_reference_number": brn,
             "uprn": uprn,
-        })
+        }
 
-    filter_desc = f", kept {len(out):,} matching candidate postcodes" if candidate_postcodes else ""
-    print(f"EPC: scanned {scanned:,} rows{filter_desc}.")
-
-    # Deduplicate: keep latest EPC per property
-    # Priority: UPRN (97.6% coverage, most reliable) > BRN > postcode+address
-    dedup: dict[str, dict] = {}
-    for rec in out:
-        uprn = rec.get("uprn", "")
-        brn = rec.get("building_reference_number", "")
+        # Dedup key: UPRN > BRN > postcode+address
         if uprn:
             key = f"uprn:{uprn}"
         elif brn:
             key = f"brn:{brn}"
         else:
-            key = f"addr:{rec['postcode_clean']}|{rec['address_clean']}"
+            key = f"addr:{postcode}|{addr}"
+
         existing = dedup.get(key)
-        if not existing or rec.get("lodgement_date", "") > existing.get("lodgement_date", ""):
+        if not existing or lodgement > existing.get("lodgement_date", ""):
             dedup[key] = rec
+
+    filter_desc = f", kept {kept:,} matching candidate postcodes" if candidate_postcodes else ""
+    print(f"EPC: scanned {scanned:,} rows{filter_desc}.")
+
     out = list(dedup.values())
     print(f"EPC: {len(out):,} unique properties after deduplication (UPRN/BRN/address).")
 

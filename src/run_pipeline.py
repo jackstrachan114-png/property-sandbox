@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config import OUTPUTS, PipelineConfig, ensure_directories
+from config import DATA_PROCESSED, OUTPUTS, PipelineConfig, ensure_directories
 from download_data import run_downloads
 from prepare_price_paid import prepare_price_paid
 from prepare_ukhpi import prepare_ukhpi
@@ -8,12 +8,12 @@ from prepare_epc import prepare_epc
 from prepare_ownership import prepare_ownership
 from prepare_addresses import prepare_addresses
 from prepare_contextual_sources import prepare_contextual_sources
-from link_properties import build_candidate_populations, link_properties, link_properties_v2
+from link_properties import build_candidate_populations, link_all
 from classify_owner_occupation import classify_owner_occupation, classify_v2, build_headline_range
 from prepare_voa import prepare_voa_band_h
 from prepare_ctb import prepare_ctb_empty
 from sensitivity_analysis import run_sensitivity
-from io_utils import write_csv
+from io_utils import read_parquet_placeholder, write_csv
 
 
 def write_policy_brief(metrics: list[dict], classified: list[dict]) -> None:
@@ -135,33 +135,49 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     candidate_postcodes = {r.get("postcode_clean", "") for r in ppd} - {""}
     print(f"Candidate postcodes for EPC/ownership filter: {len(candidate_postcodes):,}")
 
+    # Release PPD and UKHPI — data is on disk, only postcodes needed going forward
+    del ppd, ukhpi
+
     epc = prepare_epc(cfg, candidate_postcodes=candidate_postcodes); stage_counts["epc_clean"] = len(epc)
     own = prepare_ownership(cfg, candidate_postcodes=candidate_postcodes); stage_counts["ownership_clean"] = len(own)
+    del epc, own  # written to disk; linking re-reads from disk
+
     addr = prepare_addresses(cfg); stage_counts["address_reference"] = len(addr)
+    del addr
     ctx = prepare_contextual_sources(cfg); stage_counts["contextual_inventory"] = len(ctx)
+    del ctx
     voa = prepare_voa_band_h(cfg); stage_counts["voa_band_h"] = voa.get("total_band_h", 0)
+    del voa
     ctb = prepare_ctb_empty(cfg); stage_counts["ctb_band_h_empty"] = ctb.get("national_band_h_empty", 0)
+    del ctb, candidate_postcodes
 
     v1, v2 = build_candidate_populations(cfg)
     stage_counts["candidate_population_v1"] = len(v1)
     stage_counts["candidate_population_v2"] = len(v2)
+    del v1, v2  # written to disk; linking re-reads from disk
 
-    # V1 linking and classification
-    linked = link_properties(cfg); stage_counts["linked_candidate_population"] = len(linked)
+    # Link V1 and V2 in a single pass (loads EPC/ownership once)
+    linked_v1, linked_v2 = link_all(cfg)
+    stage_counts["linked_candidate_population"] = len(linked_v1)
+    stage_counts["linked_v2"] = len(linked_v2)
+    del linked_v1, linked_v2  # written to disk; classify re-reads
+
     classified = classify_owner_occupation(cfg); stage_counts["classified_owner_occupation"] = len(classified)
-
     metrics = build_headline_range(classified)
     write_csv(OUTPUTS / "headline_metrics.csv", metrics, ["estimate_type", "owner_occupation_share"])
+    del classified
 
-    # V2 linking and classification
-    linked_v2 = link_properties_v2(cfg); stage_counts["linked_v2"] = len(linked_v2)
     classified_v2 = classify_v2(cfg); stage_counts["classified_v2"] = len(classified_v2)
     metrics_v2 = build_headline_range(classified_v2)
     write_csv(OUTPUTS / "headline_metrics_v2.csv", metrics_v2, ["estimate_type", "owner_occupation_share"])
+    del classified_v2
 
     run_sensitivity(cfg)
-    write_policy_brief(metrics, classified)
-    write_audit_summary(stage_counts, classified)
+
+    # Re-read classified for policy brief and audit (small relative to peak)
+    classified_for_report = read_parquet_placeholder(DATA_PROCESSED / "classified_owner_occupation.parquet")
+    write_policy_brief(metrics, classified_for_report)
+    write_audit_summary(stage_counts, classified_for_report)
 
 
 if __name__ == "__main__":

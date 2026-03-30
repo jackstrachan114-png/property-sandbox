@@ -81,6 +81,29 @@ def read_parquet_placeholder(path: Path) -> list[dict]:
     return rows
 
 
+def iter_parquet_placeholder(path: Path):
+    """Yield rows one at a time from a JSONL file without loading all into memory."""
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
+
+def count_parquet_placeholder(path: Path) -> int:
+    """Count rows in a JSONL file without loading data into memory."""
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                count += 1
+    return count
+
+
 def score_similarity(a: str, b: str) -> int:
     """Word-level Jaccard similarity with building-number guard.
 
