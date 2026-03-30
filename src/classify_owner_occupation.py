@@ -44,36 +44,31 @@ def classify_row(r: dict) -> tuple[str, str, str, bool]:
 
 def classify_owner_occupation(cfg: PipelineConfig) -> list[dict]:
     rows = read_parquet_placeholder(DATA_PROCESSED / "linked_candidate_population.parquet")
-    out = []
     for r in rows:
         status, tier, evidence, flag = classify_row(r)
-        rr = dict(r)
-        rr.update({
-            "owner_occupation_status": status,
-            "confidence_tier": tier,
-            "evidence_basis": evidence,
-            "conflicting_signals_flag": flag,
-        })
-        out.append(rr)
+        r["owner_occupation_status"] = status
+        r["confidence_tier"] = tier
+        r["evidence_basis"] = evidence
+        r["conflicting_signals_flag"] = flag
 
-    write_parquet_placeholder(DATA_PROCESSED / "classified_owner_occupation.parquet", out)
+    write_parquet_placeholder(DATA_PROCESSED / "classified_owner_occupation.parquet", rows)
 
     conf_counts = {}
     own_counts = {}
-    for r in out:
+    for r in rows:
         ck = (r["owner_occupation_status"], r["confidence_tier"])
         conf_counts[ck] = conf_counts.get(ck, 0) + 1
         ok = r.get("ownership_type", "unresolved") or "unresolved"
         own_counts[ok] = own_counts.get(ok, 0) + 1
 
-    conf_rows = [{"owner_occupation_status": k[0], "confidence_tier": k[1], "count": v, "share": (v/len(out) if out else 0)} for k, v in conf_counts.items()]
+    conf_rows = [{"owner_occupation_status": k[0], "confidence_tier": k[1], "count": v, "share": (v/len(rows) if rows else 0)} for k, v in conf_counts.items()]
     write_csv(OUTPUTS / "classification_confidence_summary.csv", conf_rows, ["owner_occupation_status", "confidence_tier", "count", "share"])
 
-    own_rows = [{"ownership_type": k, "count": v, "share": (v/len(out) if out else 0)} for k, v in own_counts.items()]
+    own_rows = [{"ownership_type": k, "count": v, "share": (v/len(rows) if rows else 0)} for k, v in own_counts.items()]
     write_csv(OUTPUTS / "ownership_type_distribution.csv", own_rows, ["ownership_type", "count", "share"])
 
     region_counts = {}
-    for r in out:
+    for r in rows:
         region = r.get("district", "unknown")
         region_counts.setdefault(region, {"count": 0, "owner": 0})
         region_counts[region]["count"] += 1
@@ -84,7 +79,7 @@ def classify_owner_occupation(cfg: PipelineConfig) -> list[dict]:
         region_rows.append({"region": region, "count": vals["count"], "owner_occupied_share_central_proxy": (vals["owner"] / vals["count"] if vals["count"] else 0)})
     write_csv(OUTPUTS / "owner_occupation_range_by_region.csv", region_rows, ["region", "count", "owner_occupied_share_central_proxy"])
 
-    return out
+    return rows
 
 
 def classify_v2(cfg: PipelineConfig) -> list[dict]:
@@ -92,19 +87,14 @@ def classify_v2(cfg: PipelineConfig) -> list[dict]:
     rows = read_parquet_placeholder(DATA_PROCESSED / "linked_candidate_population_v2.parquet")
     if not rows:
         return []
-    out = []
     for r in rows:
         status, tier, evidence, flag = classify_row(r)
-        rr = dict(r)
-        rr.update({
-            "owner_occupation_status": status,
-            "confidence_tier": tier,
-            "evidence_basis": evidence,
-            "conflicting_signals_flag": flag,
-        })
-        out.append(rr)
-    write_parquet_placeholder(DATA_PROCESSED / "classified_v2.parquet", out)
-    return out
+        r["owner_occupation_status"] = status
+        r["confidence_tier"] = tier
+        r["evidence_basis"] = evidence
+        r["conflicting_signals_flag"] = flag
+    write_parquet_placeholder(DATA_PROCESSED / "classified_v2.parquet", rows)
+    return rows
 
 
 def build_headline_range(rows: list[dict]) -> list[dict]:
