@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from config import DATA_INTERIM, DATA_PROCESSED, OUTPUTS, PipelineConfig
-from io_utils import read_parquet_placeholder, write_csv
+from io_utils import count_parquet_placeholder, read_parquet_placeholder, write_csv
 from classify_owner_occupation import build_headline_range
 
 
@@ -18,8 +18,8 @@ def run_sensitivity(cfg: PipelineConfig) -> list[dict]:
     uncertain = sum(1 for r in rows if r.get("owner_occupation_status") == "uncertain")
 
     # V1 and V2 counts
-    v1 = len(read_parquet_placeholder(DATA_INTERIM / "candidate_population_v1.parquet"))
-    v2 = len(read_parquet_placeholder(DATA_INTERIM / "candidate_population_v2.parquet"))
+    v1 = count_parquet_placeholder(DATA_INTERIM / "candidate_population_v1.parquet")
+    v2 = count_parquet_placeholder(DATA_INTERIM / "candidate_population_v2.parquet")
 
     # V2 headline if available
     v2_rows = read_parquet_placeholder(DATA_PROCESSED / "classified_v2.parquet")
