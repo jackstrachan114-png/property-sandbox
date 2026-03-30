@@ -21,7 +21,7 @@ class PipelineConfig:
     fuzzy_match_cutoff: int = 60
     random_seed: int = 42
     strict_core_inputs: bool = True
-    ppd_download_limit: int = 5
+    ppd_download_limit: int = 15
     ukhpi_download_limit: int = 3
     epc_download_limit: int = 3
     source_urls: dict = field(default_factory=lambda: {
@@ -38,6 +38,7 @@ class PipelineConfig:
         "ehs_tables": "https://www.gov.uk/government/collections/english-housing-survey-live-tables",
         "house_building": "https://www.gov.uk/government/statistical-data-sets/live-tables-on-house-building",
         "fire_stats": "https://www.gov.uk/government/statistical-data-sets/fire-statistics-data-tables",
+        "voa_ctsop": "https://assets.publishing.service.gov.uk/media/6685468cab5fc5929851b928/CTSOP1-0-1993-2024.zip",
     })
 
 
