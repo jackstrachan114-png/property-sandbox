@@ -22,7 +22,13 @@
       "WebFetch(domain:assets.publishing.service.gov.uk)",
       "WebFetch(domain:www.data.gov.uk)",
       "WebFetch(domain:docs.os.uk)",
-      "Bash(ls /mnt/c/Users/court/mets/property-sandbox/data/raw/price_paid/*.csv)"
+      "Bash(ls /mnt/c/Users/court/mets/property-sandbox/data/raw/price_paid/*.csv)",
+      "Bash(git checkout:*)",
+      "Bash(pip3 install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(PYTHONPATH=src python -c \"from sensitivity_analysis import run_sensitivity; print\\('OK'\\)\")"
     ]
   }
 }
